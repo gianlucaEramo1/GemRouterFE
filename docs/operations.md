@@ -28,6 +28,11 @@ Units:
 - `gemrouter.service` - main service (user unit)
 - `gemrouter-nightly-restart.service` + `gemrouter-nightly-restart.timer` - nightly restart at 03:30 UTC
 
+**Docker:**
+
+`ops/docker/` runs the same service in a container, with persistent volumes and
+an update script that rolls back automatically. See [Docker deployment](docker.md).
+
 **Cloudflare Tunnel:**
 
 Template: `ops/cloudflared/gemrouter.example.yml`. Copy it to the gitignored
@@ -126,3 +131,4 @@ Likely a limit mismatch between accounts (e.g. mixing free-tier and Tier 1 witho
 | `scripts/smoke.sh` | End-to-end smoke checks |
 | `ops/systemd/` | Systemd unit templates and installer |
 | `ops/cloudflared/` | Cloudflare Tunnel config template |
+| `ops/docker/` | Dockerfile, Compose file and deploy/rollback script |

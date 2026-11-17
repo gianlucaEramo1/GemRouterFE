@@ -1,0 +1,25 @@
+# Applies to ops/docker/Dockerfile only. Patterns are relative to the build
+# context, which is the repository root.
+# Never send secrets or runtime state to the Docker build context.
+.env
+.env.*
+!.env.example
+data/
+backups/
+.runtime/
+profiles/
+.gemini/
+gemrouter.cfg
+ops/cloudflared/gemrouter.yml
+
+# Rebuilt inside the image.
+node_modules/
+dist/
+.turbo/
+coverage/
+*.log
+
+# Not needed by the image.
+.git/
+tests/
+experiments/

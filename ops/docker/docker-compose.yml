@@ -1,0 +1,59 @@
+# GemRouter with Docker Compose. See docs/docker.md.
+#
+# Run it through the wrapper, from anywhere:
+#   bash ops/docker/deploy.sh           build, start, roll back if unhealthy
+#
+# Settings come from the .env in the repository root, shared with the systemd
+# setup. The values in `environment` below override it because they describe
+# the container layout.
+
+name: gemrouter
+
+services:
+  gemrouter:
+    build:
+      context: ../..
+      dockerfile: ops/docker/Dockerfile
+    image: gemrouter:current
+    container_name: gemrouter
+    restart: unless-stopped
+    # tini as PID 1: forwards SIGTERM and reaps the Codex child processes.
+    init: true
+    # Let in-flight requests (up to the 75 s router deadline) finish on stop.
+    stop_grace_period: 90s
+    env_file: ../../.env
+    environment:
+      HOST: 0.0.0.0
+      PORT: "4024"
+      GEMROUTER_ROOT_DIR: /app
+      GEMROUTER_DATA_DIR: data
+      GEMROUTER_CODEX_PRIVATE_DIR: /home/node/.local/share/gemrouter-personal-control
+    # Host loopback only: Docker bypasses ufw for published ports, so never
+    # publish 4024 on all interfaces. Other stacks (n8n) reach the router as
+    # http://gemrouter:4024 by joining the network below, no published port.
+    ports:
+      - "127.0.0.1:${GEMROUTER_HOST_PORT:-4024}:4024"
+    volumes:
+      - data:/app/data
+      - runtime:/app/.runtime
+      - backups:/app/backups
+      - codex:/home/node/.local/share/gemrouter-personal-control
+
+networks:
+  # Fixed name, so client stacks can declare it as an external network:
+  #   networks:
+  #     gemrouter:
+  #       external: true
+  #       name: gemrouter_default
+  default:
+    name: gemrouter_default
+
+volumes:
+  # Accounts with raw Gemini keys, app key hashes, quota ledger, telemetry.
+  data:
+  # Codex runtime versions activated from the dashboard.
+  runtime:
+  # Private backups and pre-import safety copies.
+  backups:
+  # Codex logins (owner-only).
+  codex:

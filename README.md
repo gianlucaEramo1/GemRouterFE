@@ -137,6 +137,7 @@ Use it from the OpenAI SDK by pointing `base_url` at `http://<host>:4024/v1`.
 | [Routing and quota](docs/routing.md) | Multi-key routing, fallback, cooldowns, local Ollama, endpoints |
 | [Architecture and workflow](docs/architecture-workflow.md) | Startup, model discovery, app policy, routing, quota lifecycle, production checklist |
 | [Operations](docs/operations.md) | Deployment, systemd, security, live admin management, troubleshooting |
+| [Docker](docs/docker.md) | Container deployment, n8n network, updates with automatic rollback |
 | [Codex provider](docs/codex-account.md) | Login, models/thinking, quota, fallback, usage and verification |
 
 Third-party attribution for design references is recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
