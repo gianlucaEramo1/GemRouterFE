@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build and run the GemRouter container, with automatic rollback.
+# Update and run the GemRouter container, with automatic rollback.
 #
-#   bash ops/docker/deploy.sh                  build the checked-out code and switch to it
+#   bash ops/docker/deploy.sh                  pull the latest commits, build and switch to them
 #   bash ops/docker/deploy.sh rollback         return to the image used before the last deploy
 #   bash ops/docker/deploy.sh rollback <tag>   return to a specific build (git short hash)
 #   bash ops/docker/deploy.sh restart          recreate the container to reload .env, no build
@@ -9,9 +9,10 @@
 #   bash ops/docker/deploy.sh logs             follow the container log
 #   bash ops/docker/deploy.sh config           show how Compose reads the configuration
 #
-# The running container keeps serving while the new image builds and is only
-# replaced when the build succeeds. If the new container does not answer
-# /health in time, the previous image is restored automatically.
+# deploy fast-forwards the checkout to its remote branch (never overwriting work
+# done by hand on the server), then builds while the running container keeps
+# serving. The container is replaced only if the image changed, and the previous
+# image comes back automatically when the new one does not answer /health.
 set -euo pipefail
 
 # Work from the repository root, where .env lives, whatever the caller's directory.
@@ -34,6 +35,7 @@ require_env() {
 }
 
 image_exists() { docker image inspect "$1" >/dev/null 2>&1; }
+image_id() { docker image inspect -f '{{.Id}}' "$1" 2>/dev/null || true; }
 
 # Ask the app itself rather than Docker's health status, whose 30 s interval
 # would slow every deploy down.
@@ -53,20 +55,55 @@ switch_to() {
   compose up -d --no-build --force-recreate "$SERVICE"
 }
 
+# Bring the checkout to the latest commit of the branch it follows.
+update_code() {
+  if ! git rev-parse --abbrev-ref --symbolic-full-name '@{u}' >/dev/null 2>&1; then
+    log "the current branch follows no remote branch: deploying the checked-out code as is"
+    return
+  fi
+  if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+    log "files changed by hand in $(pwd):"
+    git status --short --untracked-files=no
+    log "not deploying: discard them (git checkout -- .) or commit them first"
+    exit 1
+  fi
+  git fetch --quiet
+  if git merge-base --is-ancestor '@{u}' HEAD; then
+    log "code already up to date: $(git rev-parse --short HEAD) $(git log -1 --format=%s)"
+    return
+  fi
+  if ! git merge-base --is-ancestor HEAD '@{u}'; then
+    log "not deploying: the server checkout has commits that are not on the remote branch"
+    exit 1
+  fi
+  git merge --ff-only --quiet '@{u}'
+  log "code updated to $(git rev-parse --short HEAD): $(git log -1 --format=%s)"
+}
+
 deploy() {
-  local rev
+  update_code
+
+  local rev running_id built_id previous_id
   rev=$(git rev-parse --short HEAD 2>/dev/null || echo manual)
   if [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null || true)" ]]; then
     rev="$rev-dirty"
   fi
-
-  if image_exists "$IMAGE:current"; then
-    docker tag "$IMAGE:current" "$IMAGE:previous"
-  fi
+  running_id=$(image_id "$IMAGE:current")
+  previous_id=$(image_id "$IMAGE:previous")
 
   log "building $rev (the running container keeps serving)"
   compose build "$SERVICE"
+  built_id=$(image_id "$IMAGE:current")
   docker tag "$IMAGE:current" "$IMAGE:$rev"
+
+  if [[ -n "$running_id" && "$built_id" == "$running_id" ]]; then
+    log "image unchanged: $rev is already in service"
+    compose up -d --no-build "$SERVICE"
+    return 0
+  fi
+  if [[ -n "$running_id" ]]; then
+    docker tag "$running_id" "$IMAGE:previous"
+  fi
 
   log "starting the new container"
   compose up -d --no-build --force-recreate "$SERVICE"
@@ -77,9 +114,15 @@ deploy() {
 
   log "no healthy answer within ${HEALTH_TIMEOUT_S}s; last log lines:"
   docker logs --tail 40 "$CONTAINER" 2>&1 || true
-  if image_exists "$IMAGE:previous"; then
+  if [[ -n "$running_id" ]]; then
     log "rolling back to the previous image"
-    switch_to "$IMAGE:previous"
+    switch_to "$running_id"
+    # Keep the rollback target of before this attempt.
+    if [[ -n "$previous_id" ]]; then
+      docker tag "$previous_id" "$IMAGE:previous"
+    else
+      docker image rm "$IMAGE:previous" >/dev/null 2>&1 || true
+    fi
     if wait_healthy; then
       log "rollback ok: the previous version is serving again"
     else
@@ -96,8 +139,15 @@ rollback() {
     docker images "$IMAGE" --format '  {{.Tag}}\t{{.CreatedSince}}'
     exit 1
   fi
+  local from
+  from=$(image_id "$IMAGE:current")
   log "switching to $target"
   switch_to "$target"
+  # The version just replaced becomes the rollback target, so a second
+  # rollback undoes the first.
+  if [[ -n "$from" ]]; then
+    docker tag "$from" "$IMAGE:previous"
+  fi
   if wait_healthy; then
     log "rollback ok"
   else

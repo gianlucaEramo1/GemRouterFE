@@ -12,7 +12,8 @@ Tutti i file Docker stanno in [`ops/docker/`](../ops/docker), accanto a
 | [`Dockerfile`](../ops/docker/Dockerfile) | Build multi-stage: Node 24.18 su Debian slim, utente non root `node`, healthcheck su `/health` |
 | [`Dockerfile.dockerignore`](../ops/docker/Dockerfile.dockerignore) | Tiene `.env`, `data/` e gli altri segreti fuori dalla build |
 | [`docker-compose.yml`](../ops/docker/docker-compose.yml) | Servizio `gemrouter`, rete `gemrouter_default`, volumi persistenti, porta pubblicata solo su `127.0.0.1` |
-| [`deploy.sh`](../ops/docker/deploy.sh) | Unico comando da usare: build, avvio, rollback automatico, log, stato |
+| [`deploy.sh`](../ops/docker/deploy.sh) | Unico comando da usare: scarica i commit nuovi, build, avvio, rollback automatico, log, stato |
+| [`.gitattributes`](../ops/docker/.gitattributes) | Mantiene le terminazioni di riga Linux anche se modifichi i file da Windows |
 
 Lo script si può lanciare da qualunque cartella: lavora sempre dalla radice del
 repository, dove si trova il `.env`. Richiede Docker Engine 23 o successivo con il
@@ -134,8 +135,8 @@ ricerca Google/URL context, le immagini in input non vengono inoltrate a Gemini.
 
 | Comando | Cosa fa |
 |---|---|
-| `bash ops/docker/deploy.sh` | Costruisce il codice attuale e lo mette in servizio, con rollback automatico |
-| `bash ops/docker/deploy.sh rollback` | Torna alla build precedente |
+| `bash ops/docker/deploy.sh` | Scarica gli ultimi commit del ramo, costruisce e mette in servizio, con rollback automatico |
+| `bash ops/docker/deploy.sh rollback` | Torna alla build precedente; lanciato una seconda volta annulla il rollback |
 | `bash ops/docker/deploy.sh rollback a1b2c3d` | Torna a una build specifica (hash del commit) |
 | `bash ops/docker/deploy.sh restart` | Ricrea il container per rileggere il `.env`, senza rebuild |
 | `bash ops/docker/deploy.sh status` | Stato del container e build disponibili |
@@ -146,16 +147,30 @@ ricerca Google/URL context, le immagini in input non vengono inoltrate a Gemini.
 ## Aggiornare dopo una modifica al codice
 
 1. In locale: `pnpm check && pnpm test`, poi commit e push.
-2. Sul server:
+2. Sul server, un solo comando:
 
    ```bash
-   git pull && bash ops/docker/deploy.sh
+   bash ops/docker/deploy.sh
    ```
 
-Lo script costruisce la nuova immagine mentre il container attuale continua a
-servire, la etichetta con l'hash del commit, sostituisce il container e attende che
-`/health` risponda. Se non risponde entro 120 secondi torna da solo all'immagine
-precedente. Una richiesta in corso durante il cambio ha fino a 90 secondi per finire.
+Lo script:
+
+1. scarica gli ultimi commit del ramo che il server segue (solo avanti veloce: se sul
+   server ci sono file modificati a mano o commit propri si ferma senza toccare
+   nulla);
+2. costruisce la nuova immagine mentre il container attuale continua a servire e la
+   etichetta con l'hash del commit;
+3. se l'immagine non è cambiata lo dice e non riavvia niente;
+4. altrimenti sostituisce il container e attende che `/health` risponda. Se non
+   risponde entro 120 secondi torna da solo alla versione precedente.
+
+Una richiesta in corso durante il cambio ha fino a 90 secondi per finire. Se la build
+fallisce, il container in servizio non viene toccato.
+
+Per lanciarlo con una parola da qualunque cartella, aggiungi al `~/.bashrc` del
+server `alias gemrouter-deploy='bash ~/gemrouter/ops/docker/deploy.sh'` (con il
+percorso vero). Dal tuo PC basta anche:
+`ssh <utente>@<server> 'bash gemrouter/ops/docker/deploy.sh'`.
 
 Se cambi solo il `.env` usa `restart`: `docker restart gemrouter` **non** rilegge
 il `.env`.
